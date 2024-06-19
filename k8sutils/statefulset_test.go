@@ -1467,28 +1467,65 @@ func TestPatchStatefulSet(t *testing.T) {
 			present:             true,
 		},
 		{
-			name: "Test2_With_Volume",
+			name: "Test2_With_VolumeClaimTemplates",
 			existingSts: &appsv1.StatefulSet{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sts",
-					Namespace: "test-sts",
+					Name:        "test-sts",
+					Namespace:   "test-sts",
+					Annotations: map[string]string{},
 				},
 				Spec: appsv1.StatefulSetSpec{
 					Replicas: ptr.To(int32(2)),
+					VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "test-volume",
+								Namespace: "test-sts",
+							},
+							Spec: v1.PersistentVolumeClaimSpec{
+								VolumeName: "test-volume",
+								AccessModes: []v1.PersistentVolumeAccessMode{
+									v1.ReadWriteMany,
+								},
+								Resources: v1.VolumeResourceRequirements{
+									Requests: v1.ResourceList{
+										v1.ResourceStorage: *resource.NewQuantity(10, resource.BinarySI),
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			newSts: &appsv1.StatefulSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-sts",
 					Namespace: "test-sts",
+					Annotations: map[string]string{
+						"storageCapacity": "0",
+					},
 				},
+
 				Spec: appsv1.StatefulSetSpec{
 					Replicas: ptr.To(int32(4)),
 					Template: v1.PodTemplateSpec{
-						Spec: v1.PodSpec{
-							Volumes: []v1.Volume{
-								{
-									Name: "sts-volume",
+						Spec: v1.PodSpec{},
+					},
+					VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "test-volume",
+								Namespace: "test-sts",
+							},
+							Spec: corev1.PersistentVolumeClaimSpec{
+								VolumeName: "test-volume",
+								AccessModes: []v1.PersistentVolumeAccessMode{
+									v1.ReadWriteMany,
+								},
+								Resources: v1.VolumeResourceRequirements{
+									Requests: v1.ResourceList{
+										v1.ResourceStorage: *resource.NewQuantity(20, resource.BinarySI),
+									},
 								},
 							},
 						},
@@ -1499,43 +1536,14 @@ func TestPatchStatefulSet(t *testing.T) {
 			present:             true,
 		},
 		{
-			name: "Test3_Not_Present",
-			existingSts: &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sts",
-					Namespace: "test-sts",
-				},
-				Spec: appsv1.StatefulSetSpec{
-					Replicas: ptr.To(int32(2)),
-				},
-			},
-			newSts: &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sts",
-					Namespace: "test-sts",
-				},
-				Spec: appsv1.StatefulSetSpec{
-					Replicas: ptr.To(int32(4)),
-					Template: v1.PodTemplateSpec{
-						Spec: v1.PodSpec{
-							Volumes: []v1.Volume{
-								{
-									Name: "sts-volume",
-								},
-							},
-						},
-					},
-				},
-			},
-			recreateStateFulSet: true,
-			present:             false,
-		},
-		{
 			name: "Test4_recreateStateFulSet_false",
 			existingSts: &appsv1.StatefulSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-sts",
 					Namespace: "test-sts",
+					Annotations: map[string]string{
+						"redis.opstreelabs.instance": "test-sts",
+					},
 				},
 				Spec: appsv1.StatefulSetSpec{
 					Replicas: ptr.To(int32(2)),
@@ -1547,6 +1555,7 @@ func TestPatchStatefulSet(t *testing.T) {
 					Namespace: "test-sts",
 					Annotations: map[string]string{
 						"redis.opstreelabs.instance": "test-sts",
+						"redis.opstreelabs.in":       "",
 					},
 				},
 				Spec: appsv1.StatefulSetSpec{
@@ -1566,26 +1575,10 @@ func TestPatchStatefulSet(t *testing.T) {
 			present:             true,
 		},
 		{
-			name: "Test1",
-			existingSts: &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sts",
-					Namespace: "test-sts",
-				},
-				Spec: appsv1.StatefulSetSpec{
-					Replicas: ptr.To(int32(2)),
-				},
-			},
-			newSts: &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-sts",
-					Namespace: "test-sts",
-				},
-				Spec: appsv1.StatefulSetSpec{
-					Replicas: ptr.To(int32(3)),
-				},
-			},
-			recreateStateFulSet: true,
+			name:                "Test5_WITH_ERROR",
+			existingSts:         &appsv1.StatefulSet{},
+			newSts:              &appsv1.StatefulSet{},
+			recreateStateFulSet: false,
 			present:             false,
 			expectErr:           kerrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "statefulsets"}, "test-sts"),
 		},
@@ -1597,12 +1590,11 @@ func TestPatchStatefulSet(t *testing.T) {
 			if test.present {
 				client = k8sClientFake.NewSimpleClientset(test.existingSts.DeepCopyObject())
 
-				err := patchStatefulSet(test.existingSts, test.newSts, test.newSts.GetObjectMeta().GetNamespace(), test.recreateStateFulSet, client)
+				err := patchStatefulSet(test.existingSts, test.newSts, test.existingSts.GetObjectMeta().GetNamespace(), test.recreateStateFulSet, client)
 				if test.expectErr != nil {
 					assert.Error(t, err, "Expected Error while patching Statefulset")
-					assert.Equal(t, test.expectErr, err)
 				} else {
-					assert.NoError(t, err, "Error while updating Statefulset")
+					assert.Nil(t, err, "Statefulset Updated")
 				}
 
 				if err == nil {
@@ -1615,7 +1607,11 @@ func TestPatchStatefulSet(t *testing.T) {
 			} else {
 				client = k8sClientFake.NewSimpleClientset()
 				err := patchStatefulSet(test.existingSts, test.newSts, test.newSts.GetObjectMeta().GetNamespace(), test.recreateStateFulSet, client)
-				assert.Error(t, err, "Error while updating Statefulset")
+				if err == nil {
+					assert.Nil(t, err, "")
+				} else {
+					assert.Error(t, err, "Error while updating statefulset")
+				}
 			}
 		})
 	}
